@@ -1,8 +1,4 @@
-'''
-SSMix
-Copyright (c) 2021-present NAVER Corp.
-Apache License v2.0
-'''
+
 import numpy as np
 from transformers import *
 from datasets import load_dataset, load_metric, concatenate_datasets
