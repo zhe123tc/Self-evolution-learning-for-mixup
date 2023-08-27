@@ -1,8 +1,4 @@
-'''
-SSMix
-Copyright (c) 2021-present NAVER Corp.
-Apache License v2.0
-'''
+
 from .dataset import *
 from .preprocess import *
 
