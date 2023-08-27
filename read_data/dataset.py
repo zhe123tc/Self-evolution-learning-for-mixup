@@ -1,8 +1,4 @@
-'''
-SSMix
-Copyright (c) 2021-present NAVER Corp.
-Apache License v2.0
-'''
+
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 import numpy as np
