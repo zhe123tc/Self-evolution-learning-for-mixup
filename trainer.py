@@ -1,16 +1,117 @@
-
 import os
 import random
 import numpy as np
-
+import pandas as pd
 import torch
-
+import torch.nn.functional as F
 from augmentation import Augment
 
+
+task_to_keys = {
+    "mnli": ("premise", "hypothesis"),
+    "cb":("premise","hypothesis"),
+    "mrpc": ("sentence1", "sentence2"),
+    "qnli": ("question", "sentence"),
+    "qqp": ("question1", "question2"),
+    "rte": ("sentence1", "sentence2"),
+    "sst2": ("sentence", None),
+    "trec": ("text", None),
+    "anli": ("premise", "hypothesis"),
+    "cola":("sentence",None),
+    "rotten":("text",None),
+   "agnews":("text",None),
+  "imdb":("text",None), 
+ "subj":("text",None),
+ "amazon":("text",None),
+ "dbpedia":("content",None), 
+ "yahoo":("text",None),
+ "email":("text",None),
+ "thunews":("text",None)
+}
+
+def cross_entropy(logits, target):
+    p = F.softmax(logits, dim=1)
+    log_p = -torch.log(p)
+    loss = target*log_p
+    # print(target,p,log_p,loss)
+    batch_num = logits.shape[0]
+    return loss.sum()/batch_num
+
 def cos_simi(x,y):
+    x=x.float()
+    y=y.float()
     num=torch.matmul(x,y.T)
-    denom=np.linalg.norm(x,axis=1).dot(np.linalg.norm(y,axis=1).T)
+#     denom=np.linalg.norm(x,axis=1).dot(np.linalg.norm(y,axis=1).T)
+    norm_x = torch.norm(x)  # 计算向量 x 的范数
+    norm_y = torch.norm(y, dim=1)  # 计算向量 y 的范数
+    denom= norm_x * norm_y  # 计算余弦相似度
+#     denom=(norm_x.unsqueeze(1) * norm_y.unsqueeze(0))
+#     denom=np.linalg.norm(x).dot(np.linalg.norm(y,axis=1).T)
     return num / denom
+
+def belong(input,data,device):
+    for i in range(len(data)):
+        if torch.equal(input,data[i]):
+            return True
+    return False
+
+
+def aum(inputs,targets,length,easydata,harddata,device):
+    inputid=[]
+    inputat=[]
+    inputtt=[]
+    tarr=[]
+    lenr=[]
+    inputid1=[]
+    inputat1=[]
+    inputtt1=[]
+    tarr1=[]
+    lenr1=[]
+    for i in range(len(inputs['input_ids'])):
+        input=inputs['input_ids'][i]
+        if belong(input, easydata.input_ids,device):
+            data=harddata
+        elif belong(input,harddata.input_ids,device):
+            data=easydata
+        coss=cos_simi(input,data.input_ids)
+        coss=coss.cpu()
+#     coss-=np.eye(coss.shape[0])
+        inputid.append(data.input_ids[np.argmax(coss)])
+        inputat.append(data.attn_mask[np.argmax(coss)])
+        inputtt.append(data.ttids[np.argmax(coss)])
+        tarr.append(torch.tensor(data.label_list[np.argmax(coss)]))
+        lenr.append(data.tokenized_length[np.argmax(coss)])
+        inputid1.append(data.input_ids[np.argmin(coss)])
+        inputat1.append(data.attn_mask[np.argmin(coss)])
+        inputtt1.append(data.ttids[np.argmax(coss)])
+        tarr1.append(torch.tensor(data.label_list[np.argmin(coss)]))
+        lenr1.append(data.tokenized_length[np.argmin(coss)])
+    input_right=dict()
+    input_right['input_ids']=torch.stack(inputid)
+    input_right['attention_mask']=torch.stack(inputat)
+    input_right['token_type_ids']=torch.stack(inputtt)
+    target_right=torch.stack(tarr)
+    length_right=torch.stack(lenr)
+    input_right1=dict()
+    input_right1['input_ids']=torch.stack(inputid1)
+    input_right1['attention_mask']=torch.stack(inputat1)
+    input_right1['token_type_ids']=torch.stack(inputtt1)
+    target_right1=torch.stack(tarr1)
+    length_right1=torch.stack(lenr1)
+#         input_right['input_ids']=torch.stack([data.input_ids[np.argmax(row)] for num_row,row in enumerate(coss)])
+#         input_right['attention_mask']=torch.stack([data.attn_mask[np.argmax(row)] for num_row,row in enumerate(coss)])
+#         input_right['token_type_ids']=torch.stack([data.ttids[np.argmax(row)] for num_row,row in enumerate(coss)])
+#         target_right=torch.stack([torch.tensor(data.label_list[np.argmax(row)]) for num_row, row in enumerate(coss)])
+#         length_right=torch.stack([data.tokenized_length[np.argmax(row)] for num_row, row in enumerate(coss)])
+#         inputr.append(input)
+    return (inputs,targets,length,input_right,target_right,length_right),(inputs,targets,length,input_right1,target_right1,length_right1)
+        
+
+
+#def cos_simi(x,y):
+#    num=torch.matmul(x,y.T)
+#    denom=np.linalg.norm(x,axis=1).dot(np.linalg.norm(y,axis=1).T)
+#    return num / denom
 def get_similarity(inputs,targets,length):
     input=inputs['input_ids']
     coss=cos_simi(input,input)
@@ -22,10 +123,20 @@ def get_similarity(inputs,targets,length):
     length_right=torch.stack([length[np.argmax(row)] for num_row, row in enumerate(coss)])
     return inputs,targets,length,input_right,target_right,length_right
 
-
-
+def get_similarity_num(inputs,targets,length,num):
+    input=inputs['input_ids']
+    coss=cos_simi(input,input)
+    coss-=np.eye(coss.shape[0])
+    input_right=dict()
+    #for key in inputs:
+    #    input_right[key]=torch.stack([inputs[key][np.argmax(row)] for num_row,row in enumerate(coss)])
+    #target_right=torch.stack([targets[np.argmax(row)] for num_row, row in enumerate(coss)])
+    #length_right=torch.stack([length[np.argmax(row)] for num_row, row in enumerate(coss)])
+    num_right=torch.stack([num[np.argmax(row)] for num_row, row in enumerate(coss)])
+    return num,num_right
 
 class Trainer:
+
     def __init__(self, args, model, optimizer, criterion, loader, n_labels, tokenizer, scheduler):
         self.args = args
         self.args.model = model
@@ -49,6 +160,18 @@ class Trainer:
 
     def _get_loss(self, inputs1, targets1, targets2=None, ratio=None, **kwargs):
         output = self.args.model(inputs=inputs1, **kwargs)
+        ll=[]
+        l2=[]
+        for i in range(0,len(output)):
+            ll.append(output[i][0].item())
+            l2.append(output[i][1].item())
+        pdi=pd.DataFrame()
+        pdi['yi']=ll
+        pdi['er']=l2
+        pdi.to_csv('test1.csv')
+       # if self.args.tree == 1:
+        #   loss =cross_entropy(output,targets1)
+        #else:
         loss = self.args.criterion(output, targets1)
         if targets2 is not None:
             loss = loss * ratio + self.args.criterion(output, targets2) * (1 - ratio)
@@ -262,7 +385,7 @@ class Trainer:
         self.args.model.train()
         print(f"TRAIN_{self.args.aug_mode}, epoch {epoch} start!")
 
-        for batch_idx, data in enumerate(self.loader['labeled_trainloader_easy']):
+        for batch_idx, data in enumerate(self.loader['labeled_trainloader']):
             if self.args.aug_mode == 'tmix':
                 mix_layer = random.choice([7, 9, 12])
                 mix_layer = mix_layer - 1
@@ -278,13 +401,17 @@ class Trainer:
                 raise RuntimeError('Invalid mixup')
             inputs,targets,length=data
             splitted = get_similarity(inputs,targets,length)
-
+            #splitted,splitted1=aum(inputs,targets,length,self.args.easy,self.args.hard,self.args.device)
             i_1, t_1, l_1, i_2, t_2, l_2 = splitted
+            #i_11,t_11,l_11,i_21,t_21,l_21=splitted1
             if i_1 is None:
                 continue
 
             i_1, t_1 = self._convert_cuda(i_1, t_1)
             i_2, t_2 = self._convert_cuda(i_2, t_2)
+            #i_11, t_11 = self._convert_cuda(i_11, t_11)
+            #i_21, t_21 = self._convert_cuda(i_21, t_21)
+
             loss_list = []
             # get orig data loss
             if not self.args.naive_augment:
@@ -295,45 +422,14 @@ class Trainer:
                 self._get_loss(inputs1=i_1, targets1=t_1, targets2=t_2, ratio=l, inputs2=i_2, mixup_lambda=l,
                                mixup_layer=mix_layer, mix_embedding=mix_embedding))
             #loss_list.append(
-             #   self._get_loss(inputs1=i_2, targets1=t_2, targets2=t_1, ratio=l, inputs2=i_1, mixup_lambda=l,
+             #   self._get_loss(inputs1=i_11, targets1=t_11, targets2=t_21, ratio=l, inputs2=i_21, mixup_lambda=l,
               #                 mixup_layer=mix_layer, mix_embedding=mix_embedding))
-            self._report_and_forward(batch_idx, epoch, torch.mean(torch.stack(loss_list)))
-
-        for batch_idx, data in enumerate(self.loader['labeled_trainloader_hard']):
-            if self.args.aug_mode == 'tmix':
-                mix_layer = random.choice([7, 9, 12])
-                mix_layer = mix_layer - 1
-                mix_embedding = False
-                l = np.random.beta(self.args.hidden_alpha, self.args.hidden_alpha)  # experimenting with 0.2 and 0.4
-                l = max(l, 1 - l)  # lambda
-            elif self.args.aug_mode == 'embedmix':
-                mix_embedding = True
-                mix_layer = -1
-                l = np.random.beta(self.args.embed_alpha, self.args.embed_alpha)  # experimenting with 0.2 and 0.4
-                l = max(l, 1 - l)  # lambda
-            else:
-                raise RuntimeError('Invalid mixup')
-            inputs,targets,length=data
-            splitted = get_similarity(inputs,targets,length)
-
-            i_1, t_1, l_1, i_2, t_2, l_2 = splitted
-            if i_1 is None:
-                continue
-
-            i_1, t_1 = self._convert_cuda(i_1, t_1)
-            i_2, t_2 = self._convert_cuda(i_2, t_2)
-            loss_list = []
-            # get orig data loss
-            if not self.args.naive_augment:
-                loss_list.append(self._get_loss(inputs1=i_1, targets1=t_1))
-                loss_list.append(self._get_loss(inputs1=i_2, targets1=t_2))
             loss_list.append(
-                self._get_loss(inputs1=i_1, targets1=t_1, targets2=t_2, ratio=l, inputs2=i_2, mixup_lambda=l,
+                self._get_loss(inputs1=i_2, targets1=t_2, targets2=t_1, ratio=l, inputs2=i_1, mixup_lambda=l,
                                mixup_layer=mix_layer, mix_embedding=mix_embedding))
-            #loss_list.append(
-             #   self._get_loss(inputs1=i_2, targets1=t_2, targets2=t_1, ratio=l, inputs2=i_1, mixup_lambda=l,
-              #                 mixup_layer=mix_layer, mix_embedding=mix_embedding))
+
             self._report_and_forward(batch_idx, epoch, torch.mean(torch.stack(loss_list)))
+
 
         print(f"epoch {epoch} train end")
 
@@ -341,9 +437,75 @@ class Trainer:
     def train_normal(self, epoch):
         self.args.model.train()
         print(f"TRAIN_NORMAL: epoch {epoch} train start")
+        if self.args.tree==1:
+           #ed=pd.DataFrame()
+           #hd=pd.DataFrame()
+           for batch_idx, data in enumerate(self.loader['labeled_trainloader_easy']):
+               inputs, targets, length= data
+               tensor_list = []
+               for item in targets:
+                   item = item.strip('[]')  # 去除方括号
+                   numbers = np.fromstring(item, sep=' ')  # 将字符串转换为NumPy数组
+                   tensor = torch.from_numpy(numbers)  # 将NumPy数组转换为PyTorch的tensor类型
+                   tensor_list.append(tensor)
+               result_tensor = torch.stack(tensor_list)  # 将tensor列表堆叠为一个整体的tensor
+               targets=result_tensor
+               inputs, targets = self._convert_cuda(inputs, targets)
+               loss = self._get_loss(inputs, targets)
 
-        for batch_idx, data in enumerate(self.loader['labeled_trainloader']):
+               self._report_and_forward(batch_idx, epoch, loss)
+
+        
+               #inputs, targets = self._convert_cuda(inputs, targets)
+              # splitted = get_similarity_num(inputs,targets,length,num)
+               #num_left,num_right=splitted
+               #k1,k2=task_to_keys[self.args.dataset]
+               #ed[k1]=self.args.orida['train'][num_left][k1]+self.args.orida['train'][num_right][k1]
+               #ed['parsing1']=self.args.orida['train'][num_left]['parsing1']+self.args.orida['train'][num_right]['parsing1']
+               #if k2 is not None:
+                  # ed[k2]=self.args.orida['train'][num_left][k2]+self.args.orida['train'][num_right][k2]
+                  # ed['parsing2']=self.args.orida['train'][num_left]['parsing2']+self.args.orida['train'][num_right]['parsing2']
+              # ed['label']=self.args.orida['train'][num_left]['label']+self.args.orida['train'][num_right]['label']
+           #ed.to_csv('easy'+self.args.dataset+str(self.args.seed)+'.csv')
+           for batch_idx, data in enumerate(self.loader['labeled_trainloader_hard']):
+               #inputs, targets, length, num= data
+               inputs, targets, length= data
+               tensor_list = []
+               for item in targets:
+                   item = item.strip('[]')  # 去除方括号
+                   numbers = np.fromstring(item, sep=' ')  # 将字符串转换为NumPy数组
+                   tensor = torch.from_numpy(numbers)  # 将NumPy数组转换为PyTorch的tensor类型
+                   tensor_list.append(tensor)
+               result_tensor = torch.stack(tensor_list)  # 将tensor列表堆叠为一个整体的tensor
+               targets=result_tensor
+               inputs, targets = self._convert_cuda(inputs, targets)
+               loss = self._get_loss(inputs, targets)
+
+               self._report_and_forward(batch_idx, epoch, loss)
+               #inputs, targets = self._convert_cuda(inputs, targets)
+               #splitted = get_similarity_num(inputs,targets,length,num)
+               #num_left,num_right=splitted
+               #k1,k2=task_to_keys[self.args.dataset]
+               #hd[k1]=self.args.orida['train'][num_left][k1]+self.args.orida['train'][num_right][k1]
+               #hd['parsing1']=self.args.orida['train'][num_left]['parsing1']+self.args.orida['train'][num_right]['parsing1']
+               #if k2 is not None:
+                  # hd[k2]=self.args.orida['train'][num_left][k2]+self.args.orida['train'][num_right][k2]
+                  # hd['parsing2']=self.args.orida['train'][num_left]['parsing2']+self.args.orida['train'][num_right]['parsing2']
+              # hd['label']=self.args.orida['train'][num_left]['label']+self.args.orida['train'][num_right]['label']
+           #hd.to_csv('hard'+self.args.dataset+str(self.args.seed)+'.csv')
+
+        else: 
+          for batch_idx, data in enumerate(self.loader['labeled_trainloader']):
             inputs, targets, length = data
+            if self.args.tree==1:
+               tensor_list = []
+               for item in targets:
+                   item = item.strip('[]')  # 去除方括号
+                   numbers = np.fromstring(item, sep=' ')  # 将字符串转换为NumPy数组
+                   tensor = torch.from_numpy(numbers)  # 将NumPy数组转换为PyTorch的tensor类型
+                   tensor_list.append(tensor)
+               result_tensor = torch.stack(tensor_list)  # 将tensor列表堆叠为一个整体的tensor
+               targets=result_tensor
 
             inputs, targets = self._convert_cuda(inputs, targets)
             loss = self._get_loss(inputs, targets)
@@ -361,6 +523,7 @@ class Trainer:
                 inputs, targets = self._convert_cuda(inputs, targets)
 
                 outputs = self.args.model(inputs=inputs)
+                #cre=torch.nn.CrossEntropyLoss(reduction='none')
                 loss = torch.mean(self.args.criterion(outputs, targets))
                 preds = outputs if preds is None else nested_concat(preds, outputs, dim=0)
                 label_ids = targets if label_ids is None else nested_concat(label_ids, targets, dim=0)
@@ -435,11 +598,11 @@ class Trainer:
             val_loss, val_acc = self.validate(loader=self.loader['test_loader'], mode="Test Stats")
 
         # save example: mrpc0-500, mrpc2-1500 ..
-        if self.args.aug_mode == 'normal' and val_acc == self.best_acc and self.args.eda==0 and self.args.bt==0:  # save checkpoint for only normal
+        if self.args.aug_mode == 'normal' and val_acc == self.best_acc and self.args.eda==0 and self.args.bt==0 and self.args.tree==0:  # save checkpoint for only normal
             self._save_model('best')
 
-        if self.args.aug_mode == 'ssmix' and val_acc == self.best_acc :
-            self._save_model('best')   
+       # if self.args.aug_mode == 'ssmix' and val_acc == self.best_acc :
+        #    self._save_model('best')   
 
     def _save_model(self, mode='best'):
         if self.args.dataset == 'anli':
