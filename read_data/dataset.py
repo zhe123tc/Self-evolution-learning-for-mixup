@@ -1,10 +1,9 @@
-
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 import numpy as np
 
 class NLUDataset(Dataset):
-    def __init__(self, args, glue_dataset, label_list, mode='train'):
+    def __init__(self, args, glue_dataset, label_list, mode='train',ig=1):
         self.args = args
         self.mode = mode
         if self.mode == 'train':
@@ -12,6 +11,8 @@ class NLUDataset(Dataset):
         self.input_ids = glue_dataset['input_ids']
         self.attn_mask = glue_dataset['attention_mask']
         self.ttids = glue_dataset['token_type_ids']
+        if ig==0:
+           self.num=glue_dataset['Unnamed: 0']
         self.label_list = label_list
         self.mode = mode
         self.tokenized_length = self.get_token_length()

@@ -1,4 +1,3 @@
-
 from .dataset import *
 from .preprocess import *
 
@@ -18,6 +17,10 @@ def get_data(args, max_seq_len=128):
     if args.eda ==1:
        train_labeled_dataset = NLUDataset(args, processor.train_dataset,
                                        processor.train_dataset[label_name], mode='eval')
+    elif args.bt == 1:
+       train_labeled_dataset =NLUDataset(args,processor.train_dataset,processor.train_dataset[label_name],mode='eval')
+    elif args.tree == 1:
+       train_labeled_dataset =NLUDataset(args,processor.train_dataset,processor.train_dataset[label_name],mode='eval')
     else:
        train_labeled_dataset = NLUDataset(args, processor.train_dataset,
                                        processor.train_dataset[label_name], mode='train')
@@ -35,7 +38,9 @@ def get_data(args, max_seq_len=128):
         print(f"ANLI test_len: {test_len}, val_len: {val_len}")
     else:
         test_dataset = NLUDataset(args, processor.eval_dataset, processor.eval_dataset[label_name], mode='eval')
-
+    if args.tree == 1:
+       easy_data=NLUDataset(args, processor.easy, processor.easy[label_name], mode='eval')
+       hard_data=NLUDataset(args, processor.hard, processor.hard[label_name], mode='eval')
     n_labels = processor.num_labels
     print(f"| Number of Labeled Samples : {len(train_labeled_dataset)} \t "
           f"Number of Test Samples : {len(test_dataset)} \t n_labels : {n_labels}")
