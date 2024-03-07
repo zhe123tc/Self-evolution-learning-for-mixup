@@ -1,4 +1,8 @@
-
+'''
+SSMix
+Copyright (c) 2021-present NAVER Corp.
+Apache License v2.0
+'''
 import copy
 import random
 
