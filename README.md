@@ -1,4 +1,5 @@
 # Self-evolution-learning-for-mixup
+此代码为论文[Self-Evolution Learning for Mixup: Enhance Data Augmentation on Few-Shot Text Classification Tasks](https://aclanthology.org/2023.emnlp-main.555.pdf)实验代码
 ## Get Started
 ```bash
 pip install -r requirements.txt
