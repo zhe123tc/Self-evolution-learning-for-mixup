@@ -1,4 +1,3 @@
-
 import argparse
 import numpy as np
 import torch
@@ -19,6 +18,15 @@ def _convert_cuda(inputs,args, targets=None):
         if targets is not None:
             targets = targets.to(device=args.device, non_blocking=True)
         return inputs, targets
+
+def cross_entropy(logits, target):
+    p = F.softmax(logits, dim=1)
+    log_p = -torch.log(p)
+    loss = target*log_p
+    # print(target,p,log_p,loss)
+    batch_num = logits.shape[0]
+    return loss.sum()/batch_num
+
 
 class LabelSmoothingCrossEntropy(nn.Module):
     """
@@ -42,15 +50,10 @@ class LabelSmoothingCrossEntropy(nn.Module):
         loss = self.confidence * nll_loss + self.smoothing * smooth_loss
         return loss.mean()
 
-class LabelSmoothingCrossEntropy1(nn.Module):
-    """
-    NLL loss with label smoothing.
-    """
+class InstanceLabelSmoothingCrossEntropy1(nn.Module):
+  
     def __init__(self, device,n_labels,smoothing=0.1):
-        """
-        Constructor for the LabelSmoothing module.
-        :param smoothing: label smoothing factor
-        """
+   
         super(LabelSmoothingCrossEntropy1, self).__init__()
         assert smoothing < 1.0
         self.smoothing = smoothing
@@ -67,13 +70,32 @@ class LabelSmoothingCrossEntropy1(nn.Module):
         nll_loss=-(smooth_label*logprobs).sum(dim=-1)
         return nll_loss.mean()
 
+class InstanceLabelSmoothingCrossEntropy2(nn.Module):
+  
+    def __init__(self, device,n_labels,smoothing=0.1):
+     
+        super(LabelSmoothingCrossEntropy2, self).__init__()
+        assert smoothing < 1.0
+        self.smoothing = smoothing
+        self.device=device
+        self.n_labels=n_labels
+        self.confidence = 1. - smoothing
+
+    def forward(self, x, target):
+        logprobs = F.log_softmax(x, dim=-1)
+        #num=x.shape[0]
+        #label = np.zeros((num,self.n_labels))
+        #label[range(num),target.cpu()] = 1
+        smooth_label=F.softmax(x,dim=-1)*self.smoothing+target*self.confidence
+        nll_loss=-(smooth_label*logprobs).sum(dim=-1)
+        return nll_loss.mean()
 
 def run_train(args):
     # load data
     loader = dict()
     train_labeled_set, test_set, n_labels, tokenizer, eval_fn = get_data(args)
     if args.dataset=='email' or args.dataset=='thunews':
-           train_labeled_set, test_set, n_labels, tokenizer, eval_fn = get_data(args,max_seq_len=256)
+           train_labeled_set, test_set, n_labels, tokenizer, eval_fn,easy_data,hard_data = get_data(args,max_seq_len=256)
     args.eval_fn = eval_fn
     if args.low_resource==1:
        lisq=dict()
@@ -127,7 +149,7 @@ def run_train(args):
     model = nn.DataParallel(model)
 
     # Load pretrained models for augmentation
-    if args.aug_mode == 'normal':
+    if args.aug_mode == 'normal' and args.tree==0:
         args.epochs = 3
         assert args.optimizer_lr == 5e-05
         if args.eda==1:
@@ -156,12 +178,14 @@ def run_train(args):
 
         model.load_state_dict(torch.load(checkpoint_name, map_location=args.device))
         args.epochs=5
-        if args.evo ==1:
+        if args.evo ==1 and args.tree ==0:
           args.epochs = 10
                         
           score_l=[]
           with torch.no_grad():
-             for batch_idx, (inputs, targets, length) in enumerate(loader['labeled_trainloader']):
+             for batch_idx, data  in enumerate(loader['labeled_trainloader']):
+                
+                inputs, targets, length=data
                 inputs, targets = _convert_cuda(inputs,args, targets)
                 outputs = model(inputs=inputs)#采用ssmix baseline
                 outmax=[]
@@ -178,13 +202,16 @@ def run_train(args):
                  score_list.append(score_l[i][j].item())
           judge=np.median(np.array(score_list))
           easy_ids,easy_att,easy_token=[],[],[]
+          #easy_num=[]
           hard_ids,hard_att,hard_token=[],[],[]
+          #hard_num=[]
           easy_label=[]
           hard_label=[]
           data_easy=dict()
           data_hard=dict()
           with torch.no_grad():
-            for batch_idx, (inputs, targets, length) in enumerate(loader['labeled_trainloader']):
+            for batch_idx, data in enumerate(loader['labeled_trainloader']):
+                inputs, targets, length=data
                 inputs, targets = _convert_cuda(inputs,args, targets)
                 outputs = model(inputs=inputs)
                 outmax=[]
@@ -200,27 +227,38 @@ def run_train(args):
                         easy_ids.append(inputs['input_ids'][i])
                         easy_att.append(inputs['attention_mask'][i])
                         easy_token.append(inputs['token_type_ids'][i])
+                        #easy_num.append(num[i])
                         easy_label.append(targets[i].item())
                         
                     else:
                         hard_ids.append(inputs['input_ids'][i])
                         hard_att.append(inputs['attention_mask'][i])
                         hard_token.append(inputs['token_type_ids'][i])
+                        #hard_num.append(num[i])
                         hard_label.append(targets[i].item())
           data_easy['input_ids']=torch.stack(easy_ids).cpu()
           data_easy['attention_mask']=torch.stack(easy_att).cpu()
           data_easy['token_type_ids']=torch.stack(easy_token).cpu()
+          #data_easy['Unnamed: 0']=torch.stack(easy_num)
           data_hard['input_ids']=torch.stack(hard_ids).cpu()
           data_hard['attention_mask']=torch.stack(hard_att).cpu()
           data_hard['token_type_ids']=torch.stack(hard_token).cpu()
+          #data_hard['Unnamed: 0']=torch.stack(hard_num)
           easydata=NLUDataset(args,data_easy,easy_label, mode='eval')
           harddata=NLUDataset(args,data_hard,hard_label, mode='eval')
           loader['labeled_trainloader_easy'] = DataLoader(dataset=easydata,
                                                batch_size=32, shuffle=True)
           loader['labeled_trainloader_hard']=DataLoader(dataset=harddata,
                                                batch_size=32, shuffle=True)
-
-
+          args.easy=easydata
+          args.hard=harddata
+        elif args.tree ==1:
+             args.epochs = 10
+             loader['labeled_trainloader_easy'] = DataLoader(dataset=easy_data,
+                                               batch_size=32, shuffle=True)
+             loader['labeled_trainloader_hard']=DataLoader(dataset=hard_data,
+                                               batch_size=32, shuffle=True) 
+             args.checkpoint = len(loader['labeled_trainloader_easy'])+len(loader['labeled_trainloader_hard'])
     print(args)
     # Configure optimizer
     no_decay = ["bias", "LayerNorm.weight"]
@@ -240,12 +278,14 @@ def run_train(args):
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=(loader_length * args.epochs) // 10,
                                                 num_training_steps=loader_length * args.epochs)
     criterion = nn.CrossEntropyLoss(reduction="none")
-    #criterion = LabelSmoothingCrossEntropy1(device=args.device,n_labels=n_labels)
+    #criterion = InstanceLabelSmoothingCrossEntropy1(device=args.device,n_labels=n_labels)
     #criterion = LabelSmoothingCrossEntropy()
     if args.evo == 1:
-       #criterion = LabelSmoothingCrossEntropy1(device=args.device,n_labels=n_labels,smoothing=args.smooth)
-          criterion = nn.CrossEntropyLoss(reduction="none")
+        criterion = InstanceLabelSmoothingCrossEntropy1(device=args.device,n_labels=n_labels,smoothing=args.smooth)
+         # criterion = nn.CrossEntropyLoss(reduction="none")
            #criterion = LabelSmoothingCrossEntropy()
+    if args.tree == 1:
+       criterion = InstanceLabelSmoothingCrossEntropy2(device=args.device,n_labels=n_labels,smoothing=args.smooth)
     trainer = Trainer(args=args, model=model, optimizer=optimizer, criterion=criterion, loader=loader,
                       n_labels=n_labels, tokenizer=tokenizer, scheduler=scheduler)
     trainer.run_train()
@@ -253,7 +293,7 @@ def run_train(args):
 
 def parse_argument():
     parser = argparse.ArgumentParser(description='train classification model')
-    parser.add_argument('--pretrained_model', type=str, default='bert-base-uncased', help='pretrained model')
+    parser.add_argument('--pretrained_model', type=str, default='bert-base-uncased/bert-base-uncased', help='pretrained model')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
 
     parser.add_argument('--verbose', action='store_true', help='description T/F for printing out the logs')
@@ -275,6 +315,8 @@ def parse_argument():
     parser.add_argument('--evo',type=int,default=0)
     parser.add_argument('--per',type=float,default=1)
     parser.add_argument('--eda',type=int,default=0)
+    parser.add_argument('--gen',type=int,default=0)
+    parser.add_argument('--tree',type=int,default=0)
     parser.add_argument('--bt',type=int,default=0)
     parser.add_argument('--smooth',type=float,default=0.1) 
     # Training mode. AUG_MODE must be one of following modes
